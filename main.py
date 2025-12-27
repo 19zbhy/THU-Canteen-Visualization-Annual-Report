@@ -138,7 +138,10 @@ def load_data(file_path):
 def preprocess_data(df):
     if '交易地点' not in df.columns:
         return df.copy()
-    return df[~df['交易地点'].str.contains('楼', na=False)].copy()
+    # 过滤掉非食堂地点
+    exclude_keywords = ['楼', '游泳', '打印', '天猫']
+    pattern = '|'.join(exclude_keywords)
+    return df[~df['交易地点'].str.contains(pattern, na=False)].copy()
 
 
 def create_bar_chart(location_spending, output_dir):
