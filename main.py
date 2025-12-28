@@ -10,6 +10,76 @@ from matplotlib.colors import to_rgba
 from matplotlib.ticker import FuncFormatter, MultipleLocator
 
 
+CSV_ENCODINGS = ('utf-8-sig', 'gbk')
+HEADER_KEYWORDS = ('交易时间', '交易事件', '交易金额')
+HEADER_SCAN_ROWS = 50
+HEADER_MIN_MATCH = 2
+
+
+def detect_header_row(sample_df, keywords=HEADER_KEYWORDS, min_match=HEADER_MIN_MATCH):
+    if sample_df.empty:
+        return 0
+    for idx in range(len(sample_df)):
+        row = sample_df.iloc[idx]
+        matches = 0
+        for keyword in keywords:
+            if any(keyword in str(value) for value in row.values if pd.notna(value)):
+                matches += 1
+        if matches >= min_match:
+            return idx
+    return 0
+
+
+def read_csv_sample(path, nrows=HEADER_SCAN_ROWS, encodings=CSV_ENCODINGS):
+    last_exc = None
+    for encoding in encodings:
+        try:
+            sample = pd.read_csv(path, header=None, nrows=nrows, encoding=encoding)
+            return sample, encoding
+        except UnicodeDecodeError as exc:
+            last_exc = exc
+    if last_exc:
+        raise last_exc
+    raise ValueError('无法读取 CSV 文件以检测表头。')
+
+
+def read_csv_with_auto_header(path):
+    sample, encoding = read_csv_sample(path)
+    skiprows = detect_header_row(sample)
+    return pd.read_csv(path, skiprows=skiprows, encoding=encoding)
+
+
+def read_excel_with_auto_header(path):
+    sample = pd.read_excel(path, header=None, nrows=HEADER_SCAN_ROWS)
+    skiprows = detect_header_row(sample)
+    return pd.read_excel(path, skiprows=skiprows)
+
+
+def annotate_bars(ax, fmt='{:.2f}', fontsize=10):
+    formatter = fmt if callable(fmt) else None
+    for bar in ax.patches:
+        height = bar.get_height()
+        if pd.isna(height):
+            continue
+        y = height
+        va = 'bottom' if height >= 0 else 'top'
+        if formatter:
+            label = formatter(height)
+        else:
+            try:
+                label = fmt.format(height)
+            except Exception:
+                label = str(height)
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            y,
+            label,
+            ha='center',
+            va=va,
+            fontsize=fontsize,
+        )
+
+
 def setup_chinese_font():
     # Try user-specified font path first (file path or family name).
     font_path = os.getenv('CHINESE_FONT_PATH')
@@ -116,10 +186,10 @@ def load_data(file_path):
     path = Path(file_path)
     suffix = path.suffix.lower()
     if suffix == '.csv':
-        return pd.read_csv(path, skiprows=2)
+        return read_csv_with_auto_header(path)
     if suffix in ('.xlsx', '.xls'):
         try:
-            return pd.read_excel(path, skiprows=2)
+            return read_excel_with_auto_header(path)
         except ImportError as exc:
             if suffix == '.xlsx' and 'openpyxl' in str(exc).lower():
                 raise ImportError(
@@ -144,23 +214,7 @@ def preprocess_data(df):
 def create_bar_chart(location_spending, output_dir):
     fig, ax = plt.subplots(figsize=(12, 6))
     location_spending.plot(kind='bar', ax=ax, color='skyblue', edgecolor='black')
-
-    for bar in ax.patches:
-        height = bar.get_height()
-        if height >= 0:
-            y = height
-            va = 'bottom'
-        else:
-            y = height
-            va = 'top'
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            y,
-            f'{height:.2f}',
-            ha='center',
-            va=va,
-            fontsize=10,
-        )
+    annotate_bars(ax, fmt='{:.2f}')
 
     chart_title = '各食堂消费总额统计（柱形图）'
     ax.set_title(chart_title, fontsize=15)
@@ -171,6 +225,7 @@ def create_bar_chart(location_spending, output_dir):
     fig.tight_layout()
     safe_title = chart_title.replace('/', '_')
     fig.savefig(output_dir / f'{safe_title}.png')
+    plt.close(fig)
 
 
 def create_pie_chart(location_spending, output_dir, min_percent=3):
@@ -217,6 +272,7 @@ def create_pie_chart(location_spending, output_dir, min_percent=3):
     )
     fig.tight_layout()
     fig.savefig(output_dir / f'{chart_title}.png')
+    plt.close(fig)
 
 
 def create_monthly_daily_avg_chart(spending_df, output_dir):
@@ -241,23 +297,7 @@ def create_monthly_daily_avg_chart(spending_df, output_dir):
 
     fig, ax = plt.subplots(figsize=(12, 6))
     monthly_avg.plot(kind='bar', ax=ax, color='mediumseagreen', edgecolor='black')
-
-    for bar in ax.patches:
-        height = bar.get_height()
-        if height >= 0:
-            y = height
-            va = 'bottom'
-        else:
-            y = height
-            va = 'top'
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            y,
-            f'{height:.2f}',
-            ha='center',
-            va=va,
-            fontsize=10,
-        )
+    annotate_bars(ax, fmt='{:.2f}')
 
     chart_title = '各月份日均食堂消费'
     ax.set_title(chart_title, fontsize=15)
@@ -267,6 +307,7 @@ def create_monthly_daily_avg_chart(spending_df, output_dir):
     ax.grid(axis='y', linestyle='--', alpha=0.7)
     fig.tight_layout()
     fig.savefig(output_dir / f'{chart_title}.png')
+    plt.close(fig)
 
 
 def prepare_meal_period_data(spending_df):
@@ -301,23 +342,7 @@ def create_meal_period_chart(spending_df, output_dir):
 
     fig, ax = plt.subplots(figsize=(8, 6))
     meal_spending.plot(kind='bar', ax=ax, color='cornflowerblue', edgecolor='black')
-
-    for bar in ax.patches:
-        height = bar.get_height()
-        if height >= 0:
-            y = height
-            va = 'bottom'
-        else:
-            y = height
-            va = 'top'
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            y,
-            f'{height:.2f}',
-            ha='center',
-            va=va,
-            fontsize=10,
-        )
+    annotate_bars(ax, fmt='{:.2f}')
 
     chart_title = '各餐消费总额'
     ax.set_title(chart_title, fontsize=15)
@@ -327,6 +352,7 @@ def create_meal_period_chart(spending_df, output_dir):
     ax.grid(axis='y', linestyle='--', alpha=0.7)
     fig.tight_layout()
     fig.savefig(output_dir / f'{chart_title}.png')
+    plt.close(fig)
 
 
 def create_meal_count_chart(spending_df, output_dir):
@@ -345,19 +371,7 @@ def create_meal_count_chart(spending_df, output_dir):
 
     fig, ax = plt.subplots(figsize=(8, 6))
     meal_counts.plot(kind='bar', ax=ax, color='lightsalmon', edgecolor='black')
-
-    for bar in ax.patches:
-        height = bar.get_height()
-        y = height if height >= 0 else height
-        va = 'bottom' if height >= 0 else 'top'
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            y,
-            f'{height:.0f}',
-            ha='center',
-            va=va,
-            fontsize=10,
-        )
+    annotate_bars(ax, fmt='{:.0f}')
 
     chart_title = '各餐次数统计'
     ax.set_title(chart_title, fontsize=15)
@@ -367,6 +381,7 @@ def create_meal_count_chart(spending_df, output_dir):
     ax.grid(axis='y', linestyle='--', alpha=0.7)
     fig.tight_layout()
     fig.savefig(output_dir / f'{chart_title}.png')
+    plt.close(fig)
 
 
 def create_meal_avg_chart(spending_df, output_dir):
@@ -391,23 +406,7 @@ def create_meal_avg_chart(spending_df, output_dir):
 
     fig, ax = plt.subplots(figsize=(8, 6))
     meal_avg.plot(kind='bar', ax=ax, color='mediumslateblue', edgecolor='black')
-
-    for bar in ax.patches:
-        height = bar.get_height()
-        if height >= 0:
-            y = height
-            va = 'bottom'
-        else:
-            y = height
-            va = 'top'
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            y,
-            f'{height:.2f}',
-            ha='center',
-            va=va,
-            fontsize=10,
-        )
+    annotate_bars(ax, fmt='{:.2f}')
 
     chart_title = '各餐顿均消费'
     ax.set_title(chart_title, fontsize=15)
@@ -417,6 +416,7 @@ def create_meal_avg_chart(spending_df, output_dir):
     ax.grid(axis='y', linestyle='--', alpha=0.7)
     fig.tight_layout()
     fig.savefig(output_dir / f'{chart_title}.png')
+    plt.close(fig)
 
 
 def create_canteen_avg_per_meal_chart(spending_df, output_dir):
@@ -443,23 +443,7 @@ def create_canteen_avg_per_meal_chart(spending_df, output_dir):
 
     fig, ax = plt.subplots(figsize=(12, 6))
     avg_spending.plot(kind='bar', ax=ax, color='plum', edgecolor='black')
-
-    for bar in ax.patches:
-        height = bar.get_height()
-        if height >= 0:
-            y = height
-            va = 'bottom'
-        else:
-            y = height
-            va = 'top'
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            y,
-            f'{height:.2f}',
-            ha='center',
-            va=va,
-            fontsize=10,
-        )
+    annotate_bars(ax, fmt='{:.2f}')
 
     chart_title = '各食堂顿均消费'
     ax.set_title(chart_title, fontsize=15)
@@ -469,6 +453,7 @@ def create_canteen_avg_per_meal_chart(spending_df, output_dir):
     ax.grid(axis='y', linestyle='--', alpha=0.7)
     fig.tight_layout()
     fig.savefig(output_dir / f'{chart_title}.png')
+    plt.close(fig)
 
 
 def create_yearly_spending_chart(all_df, output_dir, year=2025):
@@ -488,24 +473,13 @@ def create_yearly_spending_chart(all_df, output_dir, year=2025):
     monthly = monthly.reindex(range(1, 13), fill_value=0)
 
     fig, ax = plt.subplots(figsize=(10, 5))
-    bars = ax.bar(
+    ax.bar(
         [f'{month}月' for month in monthly.index],
         monthly.values,
         color='cornflowerblue',
         edgecolor='black',
     )
-    for bar in bars:
-        height = bar.get_height()
-        y = height if height >= 0 else height
-        va = 'bottom' if height >= 0 else 'top'
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            y,
-            f'{height:.2f}',
-            ha='center',
-            va=va,
-            fontsize=10,
-        )
+    annotate_bars(ax, fmt='{:.2f}')
 
     chart_title = f'{year}年食堂消费统计'
     ax.set_title(f'{year}年共消费 {spending_total:.2f} 元\n{chart_title}', fontsize=15)
@@ -514,6 +488,7 @@ def create_yearly_spending_chart(all_df, output_dir, year=2025):
     ax.grid(axis='y', linestyle='--', alpha=0.7)
     fig.tight_layout()
     fig.savefig(output_dir / f'{chart_title}.png')
+    plt.close(fig)
 
 
 def create_yearly_extremes_table(spending_df, output_dir, year=2025):
@@ -613,6 +588,7 @@ def create_yearly_extremes_table(spending_df, output_dir, year=2025):
     ax.set_title(title, fontsize=15, pad=10)
     fig.tight_layout()
     fig.savefig(output_dir / f'{title}.png')
+    plt.close(fig)
 
 
 def create_meal_first_last_time_chart(spending_df, output_dir):
@@ -734,24 +710,21 @@ def create_meal_first_last_time_chart(spending_df, output_dir):
 
     fig.tight_layout()
     fig.savefig(output_dir / f'{chart_title}.png')
+    plt.close(fig)
 
 
 def create_meal_attendance_chart(spending_df, output_dir):
-    df_all = spending_df.copy()
-    df_all['交易时间'] = pd.to_datetime(df_all['交易时间'], errors='coerce')
-    df_all = df_all.dropna(subset=['交易时间'])
-    if df_all.empty:
-        print('没有可用于统计的交易时间数据，跳过各餐出勤率图表生成。')
-        return
-
     df, labels, err = prepare_meal_period_data(spending_df)
     if err:
         print(f'{err}，跳过各餐出勤率图表生成。')
         return
 
     df['日期'] = df['交易时间'].dt.date
-    min_date = df_all['交易时间'].dt.date.min()
-    max_date = df_all['交易时间'].dt.date.max()
+    min_date = df['日期'].min()
+    max_date = df['日期'].max()
+    if pd.isna(min_date) or pd.isna(max_date):
+        print('未找到有效消费日期，跳过各餐出勤率图表生成。')
+        return
     total_days = (max_date - min_date).days + 1
     if total_days == 0:
         print('未找到有效消费日期，跳过各餐出勤率图表生成。')
@@ -767,23 +740,7 @@ def create_meal_attendance_chart(spending_df, output_dir):
 
     fig, ax = plt.subplots(figsize=(8, 6))
     attendance.plot(kind='bar', ax=ax, color='seagreen', edgecolor='black')
-
-    for bar in ax.patches:
-        height = bar.get_height()
-        if height >= 0:
-            y = height
-            va = 'bottom'
-        else:
-            y = height
-            va = 'top'
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            y,
-            f'{height:.1f}%',
-            ha='center',
-            va=va,
-            fontsize=10,
-        )
+    annotate_bars(ax, fmt='{:.1f}%')
 
     chart_title = '各餐出勤率（用餐次数/统计周期）'
     ax.set_title(chart_title, fontsize=15)
@@ -794,6 +751,7 @@ def create_meal_attendance_chart(spending_df, output_dir):
     ax.grid(axis='y', linestyle='--', alpha=0.7)
     fig.tight_layout()
     fig.savefig(output_dir / '各餐出勤率.png')
+    plt.close(fig)
 
 
 def create_meal_canteen_chart(spending_df, output_dir):
@@ -901,6 +859,7 @@ def create_meal_canteen_chart(spending_df, output_dir):
     )
     fig.tight_layout()
     fig.savefig(output_dir / f'{chart_title}.png')
+    plt.close(fig)
 
 
 
@@ -910,6 +869,12 @@ def main():
     file_path = find_data_file(input_path)
     df = load_data(file_path)
     df = preprocess_data(df)
+    if '交易时间' in df.columns:
+        df['交易时间'] = pd.to_datetime(df['交易时间'], errors='coerce')
+        df = df.dropna(subset=['交易时间'])
+        df = df[df['交易时间'].dt.year == 2025]
+    else:
+        print('缺少交易时间字段，无法按年份过滤，将使用全量数据。')
 
     # 2. 筛选出“持卡人消费”和“离线码在线消费”的记录
     spending_df = df[df['交易事件'].isin(['持卡人消费', '离线码在线消费'])].copy()
@@ -940,10 +905,6 @@ def main():
     create_meal_first_last_time_chart(spending_df, output_dir)
     create_meal_attendance_chart(spending_df, output_dir)
     create_meal_canteen_chart(spending_df, output_dir)
-
-    print("统计结果：")
-    print(location_spending)
-
 
 if __name__ == "__main__":
     main()
